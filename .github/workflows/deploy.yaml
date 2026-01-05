@@ -1,0 +1,78 @@
+name: CI-CD-MERN-EKS
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  FRONTEND_REPO: mern-frontend
+  BACKEND_REPO: mern-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2️⃣ Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # 3️⃣ Login to Amazon ECR
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4️⃣ Build & push FRONTEND
+      - name: Build & push frontend image
+        working-directory: frontend
+        run: |
+          IMAGE_TAG=${GITHUB_SHA}
+          docker build -t $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPO:$IMAGE_TAG .
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPO:$IMAGE_TAG
+
+      # 5️⃣ Build & push BACKEND
+      - name: Build & push backend image
+        working-directory: backend
+        run: |
+          IMAGE_TAG=${GITHUB_SHA}
+          docker build -t $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPO:$IMAGE_TAG .
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPO:$IMAGE_TAG
+
+      # 6️⃣ Install kubectl
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      # 7️⃣ Install Helm
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # 8️⃣ Configure kubeconfig for EKS
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $EKS_CLUSTER_NAME
+
+      # 9️⃣ Deploy to EKS with Helm
+      - name: Deploy to EKS with Helm
+        run: |
+          IMAGE_TAG=${GITHUB_SHA}
+
+          helm upgrade --install mern helm/mern-app \
+            --set frontend.image.repository=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPO \
+            --set frontend.image.tag=$IMAGE_TAG \
+            --set backend.image.repository=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPO \
+            --set backend.image.tag=$IMAGE_TAG
